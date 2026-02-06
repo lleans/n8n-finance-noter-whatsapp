@@ -1,0 +1,2638 @@
+{
+  "updatedAt": "2026-02-06T11:27:43.871Z",
+  "createdAt": "2026-02-05T08:36:32.177Z",
+  "id": "J-KPxzA-oEEEjuo6tTbPV",
+  "name": "Notion finance",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {
+          "download": true,
+          "userIds": "1511391020"
+        }
+      },
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1120,
+        1312
+      ],
+      "id": "8aede869-c8de-4ab7-9c4b-c1ff0fe0fd0f",
+      "name": "Telegram Trigger",
+      "webhookId": "162ea50a-2a64-41af-8e6d-83b50e60c339",
+      "credentials": {
+        "telegramApi": {
+          "id": "u2Xl8VNjQgTweYFq",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are a receipt parser agent in n8n. Extract data from image (via view_image) or text input, then save to Notion. Follow steps strictly. No extra text. Use simple rules only.\n\nStep 1 – Input\n• Image present → use view_image\n• Else use this text as input: → \"{{ $if($json.guardrailsInput, $json.guardrailsInput, '') }}\"\n• No usable input → output \"Error: No receipt data\" and stop\n\nStep 2 – Title\n\"Eats\" = mostly food/meals  \n\"Snack\" = drinks/snacks/light bites  \n\"Shop\" = general/mixed shopping  \nDefault: \"Shop\"\n\nStep 3 – Items\nParse lines for item names (often Indonesian). Ignore any non-purchased item text. Focus only on the actual purchased items section (ignore header), typically listed with quantities and prices. Remove indonesian or unsude prefix, like \"snack\", \"jajan\", etc.\nLook for: number x item, item x number, or just item (count=1). If an item has options or customizations (e.g., level, ice, flavor), combine them into one item name like \"MainItem-Option\". Remember, if something seems unrelated or weird (e.g., not a product), exclude it—it's likely not an item.  \nOutput: JSON str like \"Item-Option 1x, Item2 2x\" (comma-separated, no extras).  \nNo items → \"\"\n\nStep 4 – Total\n1. Find explicit: Total / Jumlah / Bayar / Grand Total → take that value  \n2. No explicit total → sum all item prices  \n   - Formats: 10k=10000, 15 ribu=15000, 25.000=25000, Rp 8,000=8000  \n   - With count: multiply (e.g. 2x 5k = 10000)  \n• No prices/total → total=0\n\nStep 5 – Category (based on title only)\n\"Eats\" or \"Snack\" → \"Food\"  \nMentions cafe/movie/ticket → \"Entertainment\"  \nHousehold/general shopping → \"Home\"  \n\"olshop\"/online/delivery app → \"Online Shop\"  \nElse → \"Other\"\n\nStep 6 – Date\nFind the date in receipt, usually formatted in dd-mm-YYYY/dd-mm-YY (if on image available) or fallback to  current date which on {{ new Date() }} and then format it in : \"05 February 2026\" (DD Month YYYY, full month name). \n\nStep 7 – Output JSON\n{\n  \"title\": str,\n  \"items\": str,\n  \"total\": number,\n  \"category\": str,\n  \"date\": str,\n  \"notes\": str or null   // only if something missing, specifically on the items\n}\n\nExamples (for reference only – do not output them):\n\nText: \"es krim 20k\\nmie 10000\"\n→ title:\"Snack\", items: \"Es krim 1x, Mie 1x\", total:30000, category:\"Food\"\n\nText: \"2x kopi 5k\\nTotal 15 ribu\"\n→ title:\"Snack\", items: \"Kopi 2x\", total:15000, category:\"Food\"\n\nText: \"Nasi Goreng x2 20k, Teh 5k, Jumlah 45k\"\n→ title:\"Eats\", items: \"Nasi goreng 2x\", total:45000, category:\"Food\"\n\nText: \"Nasi Goreng 20k, 24 februray 2026\"\n→ title:\"Eats\", items: \"Nasi goreng 2x\", total:45000, category:\"Food\", date: \"24 February 2026\"\n\nText: \"Snack Batagor 5k\"\n→ title:\"Snack\", items: \"Batagor 1x\", total:5000, category:\"Food\"\n\nText: \"Roti 10k\"\n→ title:\"Snack\", items: \"Roti 1x\", total:10000, category:\"Food\"\n\nText: \"Jajan Lumpia 3k\"\n→ title:\"Snack\", items: \"Lumpia 1x\", total:1000, category:\"Food\"\n\nProcess once → output JSON first.  \nNo chit-chat. No extra explanations.",
+        "hasOutputParser": true,
+        "options": {
+          "passthroughBinaryImages": true
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        512,
+        -48
+      ],
+      "id": "b8b25b96-ff2b-4893-a589-52dc9eea745a",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "toolDescription": "AI Agent that will execute notion create",
+        "text": "You are a Notion Expenses agent in n8n. Receive JSON → map to Notion DB properties → create page. Follow steps exactly. No extra text. Simple rules only.\n\nExpected input JSON (matches upstream parser):\n{\n  \"title\":     str,               // Eats / Snack / Shop / etc.\n  \"items\":     array,             // [{\"item\":\"name\",\"count\":N}, …] or []\n  \"total\":     number,            // already normalized integer\n  \"category\":  str,               // Food / Entertainment / Home / Online Shop / Other\n  \"date\":      str                // \"DD Month YYYY\" e.g. \"05 February 2026\"\n}\n\nStep 1 – Validate\n• No JSON or missing critical keys (title, total, category, date) → \"Error: Invalid input\" → stop\n• items not array → treat as []\n\nStep 2 – Map properties\n• Expense (title)          ← \"title\" or \"Untitled\" if empty\n• Date (date)              ← parse \"date\" → ISO \"YYYY-MM-DD\" (Asia/Jakarta TZ)\n                             Invalid/missing → current date Asia/Jakarta\n• Category (select)        ← exact match [\"Food\",\"Entertainment\",\"Home\",\"Online Shop\",\"Other\"]\n                             Else → \"Other\"\n• Amount (number)          ← \"total\" (already number) or 0 if invalid\n• Comment (rich_text)      ← join items: \"Item1 Nx, Item2 Mx, …\"\n                             Format: each → \"{item} {count}x\"\n                             Empty array → \"\"\n\nStep 3 – Output mapped JSON (debug)\n{\n  \"expense\":   str,\n  \"date\":      \"YYYY-MM-DD\",\n  \"category\":  str,\n  \"amount\":    number,\n  \"comment\":   str\n}\n\nStep 4 – Create page\nInteract with create notion database page to cearte new page into database\n\nProcess once → output mapped JSON first → then call Notion create page.\nNo chit-chat. No explanations.\n\nExample:\nInput:\n{\n  \"title\": \"Snack\",\n  \"items\": [{\"item\":\"es krim\",\"count\":1},{\"item\":\"mie\",\"count\":1}],\n  \"total\": 30000,\n  \"category\": \"Food\",\n  \"date\": \"05 February 2026\"\n}\n\nMapped output:\n{\n  \"expense\": \"Snack\",\n  \"date\": \"2026-02-05\",\n  \"category\": \"Food\",\n  \"amount\": 30000,\n  \"comment\": \"es krim 1x, mie 1x\"\n}\n\n→ create page",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agentTool",
+      "typeVersion": 3,
+      "position": [
+        -912,
+        1616
+      ],
+      "id": "271f9256-909f-46b5-ba13-ad5f181f8b5f",
+      "name": "AI Agent Tool"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "54e2eb95-081b-45f4-ad18-dd261a488957",
+              "leftValue": "={{ $('Webhook').item.json.body.data.message.body }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -224,
+        512
+      ],
+      "id": "c308647a-5bc5-4a42-a63b-b5631a9ae72b",
+      "name": "if text only"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c8a3288a-c33e-47a9-9a46-8171d912d772",
+              "leftValue": "={{ $('Webhook').item.json.body.data.message._data.mimetype }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "0cc06367-53fd-4c86-b737-f4eae6f422c0",
+              "leftValue": "={{ $('Webhook').item.json.body.data.message.body }}",
+              "rightValue": "note",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -448,
+        368
+      ],
+      "id": "38375642-1de6-4233-b771-147e36836f12",
+      "name": "If image"
+    },
+    {
+      "parameters": {
+        "text": "={{ $('Webhook').item.json.body.data.message.body }}",
+        "guardrails": {
+          "custom": {
+            "guardrail": [
+              {
+                "name": "It should talk about receipt",
+                "threshold": 0.7,
+                "prompt": "The input text should talk about receipt. if its not talk about receipt its should not been passed. \n\nexample text that should pass\nice cream 20k\neats 10.000\nbandana 2x 1000\netc.\n\nexample text that should not pass\nhello, how are you\ni wanted you to help me\nhi\netc."
+              }
+            ]
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.guardrails",
+      "typeVersion": 2,
+      "position": [
+        0,
+        384
+      ],
+      "id": "424fb8ab-2efc-4daa-ba9b-26050efe7233",
+      "name": "Guardrails"
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "databaseId": {
+          "__rl": true,
+          "value": "6cb3902d-c410-4daf-a3b4-39e4be39630d",
+          "mode": "list",
+          "cachedResultName": "Expenses",
+          "cachedResultUrl": "https://www.notion.so/6cb3902dc4104dafa3b439e4be39630d"
+        },
+        "title": "=",
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Amount|number",
+              "numberValue": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('propertyValues0_Number', ``, 'number') }}"
+            },
+            {
+              "key": "Category|select",
+              "selectValue": "="
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.notionTool",
+      "typeVersion": 2.2,
+      "position": [
+        -1120,
+        1712
+      ],
+      "id": "ddbf7fdf-72d5-4a7a-bd7b-cfbe7c900d94",
+      "name": "Create a database page in Notion",
+      "credentials": {
+        "notionApi": {
+          "id": "mKGLQR8znfRSqneW",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsonSchemaExample": "{\n  \"title\": \"Eats\",\n  \"items\": \"ayam 1x\",\n  \"total\": 20000,\n  \"category\": \"Food\",\n  \"date\": \"20 January 2026\",\n  \"notes\": \"something else if missing\"\n}",
+        "autoFix": true
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        640,
+        176
+      ],
+      "id": "4fd606e5-cd0a-4f03-a1cc-c5f24a9fd10a",
+      "name": "Structured Output Parser"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.0-flash-lite-001",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        -1120,
+        1536
+      ],
+      "id": "7c5206e3-4f4f-40a1-b67a-e47d88a7cc2f",
+      "name": "flash 2.5 lite",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "4sAuTN4q0OVGuY8s",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "databaseId": {
+          "__rl": true,
+          "value": "6cb3902d-c410-4daf-a3b4-39e4be39630d",
+          "mode": "list",
+          "cachedResultName": "Expenses",
+          "cachedResultUrl": "https://www.notion.so/6cb3902dc4104dafa3b439e4be39630d"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Amount|number",
+              "numberValue": "={{ $json.output.total }}"
+            },
+            {
+              "key": "Category|select",
+              "selectValue": "={{ $json.output.category }}"
+            },
+            {
+              "key": "Comment|rich_text",
+              "textContent": "={{ $json.output.items }}"
+            },
+            {
+              "key": "Date|date",
+              "includeTime": false,
+              "date": "={{ $json.output.date }}",
+              "timezone": "Asia/Jakarta"
+            },
+            {
+              "key": "Expense|title",
+              "title": "={{ $json.output.title }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        1680,
+        96
+      ],
+      "id": "8c16138b-91b3-49dd-81df-a600b00c6e4f",
+      "name": "Create a database page",
+      "credentials": {
+        "notionApi": {
+          "id": "mKGLQR8znfRSqneW",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "=Done ✅\n{{ $('Create a database page').item.json.url }}",
+        "replyMarkup": "replyKeyboardRemove",
+        "replyKeyboardRemove": {
+          "remove_keyboard": true
+        },
+        "additionalFields": {
+          "appendAttribution": false,
+          "reply_to_message_id": "={{ $('Telegram Trigger').item.json.message.message_id }}"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -1120,
+        864
+      ],
+      "id": "946439da-22bc-48cb-8606-222caa617cde",
+      "name": "Send a text message",
+      "webhookId": "505379c9-768c-407e-ac42-3beca0691ff3",
+      "notesInFlow": false,
+      "credentials": {
+        "telegramApi": {
+          "id": "u2Xl8VNjQgTweYFq",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "d82553c6-0831-4ac3-baef-4da5da7dbb6c",
+              "leftValue": "={{ $json.output.title }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "04cf2759-0c30-4995-9602-d1da203de451",
+              "leftValue": "={{ $json.output.items }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "62bf3dee-3eea-42a5-9e02-87e8e7a64df6",
+              "leftValue": "={{ $json.output.total }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "notEquals"
+              }
+            },
+            {
+              "id": "cd32fb8e-bdc0-4f3f-9816-8b86c63c965d",
+              "leftValue": "={{ $json.output.category }}",
+              "rightValue": "^(Food|Entertainment|Home|Online Shop|Other)$",
+              "operator": {
+                "type": "string",
+                "operation": "regex"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1008,
+        160
+      ],
+      "id": "ca204c16-6575-4a3b-a5b2-84f3c4585749",
+      "name": "If all exist"
+    },
+    {
+      "parameters": {
+        "operation": "setInputs"
+      },
+      "type": "n8n-nodes-base.evaluation",
+      "typeVersion": 4.8,
+      "position": [
+        -1120,
+        1088
+      ],
+      "id": "a8a6b851-5e99-4724-a5f4-ac018ca93410",
+      "name": "Evaluation"
+    },
+    {
+      "parameters": {
+        "jsCode": "return {\n  output: {\n    ...$input.first().json.output,\n    date: DateTime.now().toFormat('d LLL yyyy')\n  }\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1456,
+        176
+      ],
+      "id": "0758c91d-cebf-4316-8680-01bc19d5ffc2",
+      "name": "Fall bakc current date"
+    },
+    {
+      "parameters": {
+        "model": "mistralai/mistral-small-3.2-24b-instruct",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        416,
+        384
+      ],
+      "id": "cb08de43-3dd3-4538-bfd1-3bb0b12631e6",
+      "name": "ministral 3b vision",
+      "credentials": {
+        "openRouterApi": {
+          "id": "7EiThyzOFBzZiqJK",
+          "name": "OpenRouter account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "mistralai/ministral-3b",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        704,
+        384
+      ],
+      "id": "a39fe3b7-1e1b-4064-acf1-e0b66d4dc824",
+      "name": "ministral 3b",
+      "credentials": {
+        "openRouterApi": {
+          "id": "7EiThyzOFBzZiqJK",
+          "name": "OpenRouter account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "rule": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "a85770dc-2198-4437-8901-d8338a2233f4",
+                    "leftValue": "={{ $('Webhook').item.json.body.data.message._data.mimetype }}",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "string",
+                      "operation": "exists",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "modelIndex": 2,
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "7a7200b8-d514-46c9-a461-14116605e428",
+                    "leftValue": "={{ $('Webhook').item.json.body.data.message.body }}",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "string",
+                      "operation": "exists",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.modelSelector",
+      "typeVersion": 1,
+      "position": [
+        352,
+        176
+      ],
+      "id": "e99a6c00-9feb-4f1b-9a44-345c68711e81",
+      "name": "Model Selector"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "e0377239-a3cd-40b4-80a4-f194b765d84b",
+              "leftValue": "={{ $('Webhook').item.json.body.data.message._data.mimetype }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1904,
+        96
+      ],
+      "id": "12696938-bd03-40b9-b719-6c0faf337ffb",
+      "name": "If image exist"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/file_uploads",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2025-09-03"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "filename",
+              "value": "={{ $('Get Media').item.binary.data.fileName }}"
+            },
+            {
+              "name": "content_type",
+              "value": "={{ $('Get Media').item.binary.data.mimeType }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2128,
+        32
+      ],
+      "id": "67ec97a9-3587-4854-a180-469c3501d224",
+      "name": "create file upload in notion",
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "5vFYdLaF0aeJJnsf",
+          "name": "Notion"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.notion.com/v1/file_uploads/{{ $json.id }}/send",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "=2025-09-03"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "={{ $('Get Media').item.binary.data }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2352,
+        32
+      ],
+      "id": "15058907-0601-4a79-809d-3e58da936d78",
+      "name": "upload file into notion",
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "5vFYdLaF0aeJJnsf",
+          "name": "Notion"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.notion.com/v1/blocks/{{ $('Create a database page').item.json.id }}/children",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "=2025-09-03"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "children",
+              "value": "={{\n[\n  {\n    type: \"image\",\n    image: {\n      type: \"file_upload\",\n      file_upload: {\n        id: $json.id\n      }\n    }\n  }\n]\n}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2576,
+        32
+      ],
+      "id": "7045bfa0-3240-4dc5-873b-d2fe7ddfe606",
+      "name": "append to block",
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "5vFYdLaF0aeJJnsf",
+          "name": "Notion"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "errorMessage": "=womp womp\n\n{{ $json }}"
+      },
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        1232,
+        288
+      ],
+      "id": "f781cd42-ff2c-4f4e-97c5-a2aba9eae1f2",
+      "name": "Stop and Error"
+    },
+    {
+      "parameters": {
+        "errorMessage": "=womp womp\n\n{{ $json }}"
+      },
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        576,
+        640
+      ],
+      "id": "b2f0fd38-9195-4291-b875-867fb2ed3e1a",
+      "name": "Stop and Error1"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "web-whatsapp",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -1120,
+        432
+      ],
+      "id": "bed61fa0-c4f7-4842-a5c9-c189497e342b",
+      "name": "Webhook",
+      "webhookId": "dc4a5e14-6918-437c-9342-5a9746361038"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "b772fe1e-5831-4317-a304-8011ed306621",
+              "leftValue": "={{ $json.body.data.message._data.id.fromMe }}",
+              "rightValue": "message_create",
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "d6225ccb-180c-46fa-82a2-50a7411bb9b2",
+              "leftValue": "={{ $json.body.data.message._data.notifyName }}",
+              "rightValue": "Ahmadun Na'il",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -896,
+        432
+      ],
+      "id": "faa0498e-c1b4-43de-b218-217e640806c7",
+      "name": "Filter webhook"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://wwebjs-api:3000/message/downloadMediaAsData/{{ $('Webhook').item.json.body.sessionId }}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "messageId",
+              "value": "={{ $('Webhook').item.json.body.data.message.id.id }}"
+            },
+            {
+              "name": "chatId",
+              "value": "={{ $('Webhook').item.json.body.data.message.id.remote }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        64,
+        96
+      ],
+      "id": "0ab48e68-4343-4cb6-a55b-56c3a0294629",
+      "name": "Get Media"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://wwebjs-api:3000/chat/sendStateTyping/{{ $json.body.sessionId }}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "chatId",
+              "value": "={{ $json.body.data.message.id.remote }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -672,
+        368
+      ],
+      "id": "bdd10e0f-5297-4abe-ae51-2e7e68af3ed0",
+      "name": "Send Typing"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://wwebjs-api:3000/chat/clearState/{{ $('Webhook').item.json.body.sessionId }}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "chatId",
+              "value": "={{ $('Webhook').item.json.body.data.message.id.remote }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2800,
+        96
+      ],
+      "id": "b725dea0-8c1d-474e-b13a-6a1ee15dbc2b",
+      "name": "Clear Typing"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://wwebjs-api:3000/message/reply/{{ $('Webhook').item.json.body.sessionId }}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "messageId",
+              "value": "={{ $('Webhook').item.json.body.data.message.id.id }}"
+            },
+            {
+              "name": "chatId",
+              "value": "={{ $('Webhook').item.json.body.data.message.id.remote }}"
+            },
+            {
+              "name": "content",
+              "value": "=Done ✅ \n{{ $('Create a database page').item.json.url }}"
+            },
+            {
+              "name": "contentType",
+              "value": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        3024,
+        96
+      ],
+      "id": "a1aff05e-9a95-44a0-a528-54d7d1ad93a6",
+      "name": "Reply"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c60eb60d-33f9-4f7c-8c78-3e68b25e4d24",
+              "leftValue": "={{(()=>{ const dateString = $json.output.date; const target = DateTime.fromFormat(dateString, 'd LLL yyyy'); const now = DateTime.now();  let diffInMonths = Math.abs(target.diff(now, 'months').months);  return Math.round(diffInMonths) || 0; })()}}",
+              "rightValue": "={{ 12 }}",
+              "operator": {
+                "type": "number",
+                "operation": "lt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1232,
+        96
+      ],
+      "id": "0cba200b-b8ce-4165-a613-453ca19fae43",
+      "name": "If check date"
+    },
+    {
+      "parameters": {
+        "model": "openrouter/free",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        80,
+        608
+      ],
+      "id": "271f66f9-9d56-4c04-b41a-0698fbc8faed",
+      "name": "open router free",
+      "credentials": {
+        "openRouterApi": {
+          "id": "7EiThyzOFBzZiqJK",
+          "name": "OpenRouter account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        []
+      ]
+    },
+    "AI Agent Tool": {
+      "ai_tool": [
+        []
+      ]
+    },
+    "if text only": {
+      "main": [
+        [
+          {
+            "node": "Guardrails",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Stop and Error1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If image": {
+      "main": [
+        [
+          {
+            "node": "Get Media",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "if text only",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardrails": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Stop and Error1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create a database page in Notion": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent Tool",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "flash 2.5 lite": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent Tool",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "If all exist",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create a database page": {
+      "main": [
+        [
+          {
+            "node": "If image exist",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a text message": {
+      "main": [
+        []
+      ]
+    },
+    "If all exist": {
+      "main": [
+        [
+          {
+            "node": "If check date",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Stop and Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fall bakc current date": {
+      "main": [
+        [
+          {
+            "node": "Create a database page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ministral 3b vision": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Model Selector",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ministral 3b": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Structured Output Parser",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Model Selector",
+            "type": "ai_languageModel",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Model Selector": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If image exist": {
+      "main": [
+        [
+          {
+            "node": "create file upload in notion",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Clear Typing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "create file upload in notion": {
+      "main": [
+        [
+          {
+            "node": "upload file into notion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "upload file into notion": {
+      "main": [
+        [
+          {
+            "node": "append to block",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "append to block": {
+      "main": [
+        [
+          {
+            "node": "Clear Typing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Filter webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter webhook": {
+      "main": [
+        [
+          {
+            "node": "Send Typing",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Get Media": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Typing": {
+      "main": [
+        [
+          {
+            "node": "If image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply": {
+      "main": [
+        []
+      ]
+    },
+    "Clear Typing": {
+      "main": [
+        [
+          {
+            "node": "Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If check date": {
+      "main": [
+        [
+          {
+            "node": "Create a database page",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fall bakc current date",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "open router free": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Guardrails",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "rnXJ1XQsW1gGNEu1",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {},
+  "versionId": "7cee4cb4-301a-4bf0-9211-5a2528c0acf0",
+  "activeVersionId": "7cee4cb4-301a-4bf0-9211-5a2528c0acf0",
+  "versionCounter": 1882,
+  "triggerCount": 2,
+  "shared": [
+    {
+      "updatedAt": "2026-02-05T08:36:32.216Z",
+      "createdAt": "2026-02-05T08:36:32.216Z",
+      "role": "workflow:owner",
+      "workflowId": "J-KPxzA-oEEEjuo6tTbPV",
+      "projectId": "lcXX5dGx4MOPI1YW",
+      "project": {
+        "updatedAt": "2025-10-24T05:44:44.193Z",
+        "createdAt": "2025-07-20T15:30:27.097Z",
+        "id": "lcXX5dGx4MOPI1YW",
+        "name": "llean s <ahmadunnail0@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "66de3ae6-081c-419d-899a-09cc5d67d161",
+        "projectRelations": [
+          {
+            "updatedAt": "2025-07-20T15:30:27.101Z",
+            "createdAt": "2025-07-20T15:30:27.101Z",
+            "userId": "66de3ae6-081c-419d-899a-09cc5d67d161",
+            "projectId": "lcXX5dGx4MOPI1YW",
+            "user": {
+              "updatedAt": "2026-02-06T13:17:54.000Z",
+              "createdAt": "2025-07-20T15:30:22.564Z",
+              "id": "66de3ae6-081c-419d-899a-09cc5d67d161",
+              "email": "ahmadunnail0@gmail.com",
+              "firstName": "llean",
+              "lastName": "s",
+              "personalizationAnswers": {
+                "version": "v4",
+                "personalization_survey_submitted_at": "2025-07-20T15:33:34.175Z",
+                "personalization_survey_n8n_version": "1.102.4",
+                "companyIndustryExtended": [
+                  "it-industry"
+                ],
+                "companySize": "personalUser",
+                "companyType": "other",
+                "role": "data-science",
+                "reportedSource": "youtube"
+              },
+              "settings": {
+                "userActivated": true,
+                "firstSuccessfulWorkflowId": "vrLAjMBk7YaR9hJZ",
+                "userActivatedAt": 1753059118757,
+                "easyAIWorkflowOnboarded": true,
+                "npsSurvey": {
+                  "responded": true,
+                  "lastShownAt": 1769253773619
+                }
+              },
+              "disabled": false,
+              "mfaEnabled": false,
+              "lastActiveAt": "2026-02-06",
+              "isPending": false
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "tags": [],
+  "parentFolder": null,
+  "activeVersion": {
+    "updatedAt": "2026-02-06T11:28:11.000Z",
+    "createdAt": "2026-02-06T11:27:43.882Z",
+    "versionId": "7cee4cb4-301a-4bf0-9211-5a2528c0acf0",
+    "workflowId": "J-KPxzA-oEEEjuo6tTbPV",
+    "nodes": [
+      {
+        "parameters": {
+          "updates": [
+            "message"
+          ],
+          "additionalFields": {
+            "download": true,
+            "userIds": "1511391020"
+          }
+        },
+        "type": "n8n-nodes-base.telegramTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          -1120,
+          1312
+        ],
+        "id": "8aede869-c8de-4ab7-9c4b-c1ff0fe0fd0f",
+        "name": "Telegram Trigger",
+        "webhookId": "162ea50a-2a64-41af-8e6d-83b50e60c339",
+        "credentials": {
+          "telegramApi": {
+            "id": "u2Xl8VNjQgTweYFq",
+            "name": "Telegram account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "promptType": "define",
+          "text": "=You are a receipt parser agent in n8n. Extract data from image (via view_image) or text input, then save to Notion. Follow steps strictly. No extra text. Use simple rules only.\n\nStep 1 – Input\n• Image present → use view_image\n• Else use this text as input: → \"{{ $if($json.guardrailsInput, $json.guardrailsInput, '') }}\"\n• No usable input → output \"Error: No receipt data\" and stop\n\nStep 2 – Title\n\"Eats\" = mostly food/meals  \n\"Snack\" = drinks/snacks/light bites  \n\"Shop\" = general/mixed shopping  \nDefault: \"Shop\"\n\nStep 3 – Items\nParse lines for item names (often Indonesian). Ignore any non-purchased item text. Focus only on the actual purchased items section (ignore header), typically listed with quantities and prices. Remove indonesian or unsude prefix, like \"snack\", \"jajan\", etc.\nLook for: number x item, item x number, or just item (count=1). If an item has options or customizations (e.g., level, ice, flavor), combine them into one item name like \"MainItem-Option\". Remember, if something seems unrelated or weird (e.g., not a product), exclude it—it's likely not an item.  \nOutput: JSON str like \"Item-Option 1x, Item2 2x\" (comma-separated, no extras).  \nNo items → \"\"\n\nStep 4 – Total\n1. Find explicit: Total / Jumlah / Bayar / Grand Total → take that value  \n2. No explicit total → sum all item prices  \n   - Formats: 10k=10000, 15 ribu=15000, 25.000=25000, Rp 8,000=8000  \n   - With count: multiply (e.g. 2x 5k = 10000)  \n• No prices/total → total=0\n\nStep 5 – Category (based on title only)\n\"Eats\" or \"Snack\" → \"Food\"  \nMentions cafe/movie/ticket → \"Entertainment\"  \nHousehold/general shopping → \"Home\"  \n\"olshop\"/online/delivery app → \"Online Shop\"  \nElse → \"Other\"\n\nStep 6 – Date\nFind the date in receipt, usually formatted in dd-mm-YYYY/dd-mm-YY (if on image available) or fallback to  current date which on {{ new Date() }} and then format it in : \"05 February 2026\" (DD Month YYYY, full month name). \n\nStep 7 – Output JSON\n{\n  \"title\": str,\n  \"items\": str,\n  \"total\": number,\n  \"category\": str,\n  \"date\": str,\n  \"notes\": str or null   // only if something missing, specifically on the items\n}\n\nExamples (for reference only – do not output them):\n\nText: \"es krim 20k\\nmie 10000\"\n→ title:\"Snack\", items: \"Es krim 1x, Mie 1x\", total:30000, category:\"Food\"\n\nText: \"2x kopi 5k\\nTotal 15 ribu\"\n→ title:\"Snack\", items: \"Kopi 2x\", total:15000, category:\"Food\"\n\nText: \"Nasi Goreng x2 20k, Teh 5k, Jumlah 45k\"\n→ title:\"Eats\", items: \"Nasi goreng 2x\", total:45000, category:\"Food\"\n\nText: \"Nasi Goreng 20k, 24 februray 2026\"\n→ title:\"Eats\", items: \"Nasi goreng 2x\", total:45000, category:\"Food\", date: \"24 February 2026\"\n\nText: \"Snack Batagor 5k\"\n→ title:\"Snack\", items: \"Batagor 1x\", total:5000, category:\"Food\"\n\nText: \"Roti 10k\"\n→ title:\"Snack\", items: \"Roti 1x\", total:10000, category:\"Food\"\n\nText: \"Jajan Lumpia 3k\"\n→ title:\"Snack\", items: \"Lumpia 1x\", total:1000, category:\"Food\"\n\nProcess once → output JSON first.  \nNo chit-chat. No extra explanations.",
+          "hasOutputParser": true,
+          "options": {
+            "passthroughBinaryImages": true
+          }
+        },
+        "type": "@n8n/n8n-nodes-langchain.agent",
+        "typeVersion": 3.1,
+        "position": [
+          512,
+          -48
+        ],
+        "id": "b8b25b96-ff2b-4893-a589-52dc9eea745a",
+        "name": "AI Agent"
+      },
+      {
+        "parameters": {
+          "toolDescription": "AI Agent that will execute notion create",
+          "text": "You are a Notion Expenses agent in n8n. Receive JSON → map to Notion DB properties → create page. Follow steps exactly. No extra text. Simple rules only.\n\nExpected input JSON (matches upstream parser):\n{\n  \"title\":     str,               // Eats / Snack / Shop / etc.\n  \"items\":     array,             // [{\"item\":\"name\",\"count\":N}, …] or []\n  \"total\":     number,            // already normalized integer\n  \"category\":  str,               // Food / Entertainment / Home / Online Shop / Other\n  \"date\":      str                // \"DD Month YYYY\" e.g. \"05 February 2026\"\n}\n\nStep 1 – Validate\n• No JSON or missing critical keys (title, total, category, date) → \"Error: Invalid input\" → stop\n• items not array → treat as []\n\nStep 2 – Map properties\n• Expense (title)          ← \"title\" or \"Untitled\" if empty\n• Date (date)              ← parse \"date\" → ISO \"YYYY-MM-DD\" (Asia/Jakarta TZ)\n                             Invalid/missing → current date Asia/Jakarta\n• Category (select)        ← exact match [\"Food\",\"Entertainment\",\"Home\",\"Online Shop\",\"Other\"]\n                             Else → \"Other\"\n• Amount (number)          ← \"total\" (already number) or 0 if invalid\n• Comment (rich_text)      ← join items: \"Item1 Nx, Item2 Mx, …\"\n                             Format: each → \"{item} {count}x\"\n                             Empty array → \"\"\n\nStep 3 – Output mapped JSON (debug)\n{\n  \"expense\":   str,\n  \"date\":      \"YYYY-MM-DD\",\n  \"category\":  str,\n  \"amount\":    number,\n  \"comment\":   str\n}\n\nStep 4 – Create page\nInteract with create notion database page to cearte new page into database\n\nProcess once → output mapped JSON first → then call Notion create page.\nNo chit-chat. No explanations.\n\nExample:\nInput:\n{\n  \"title\": \"Snack\",\n  \"items\": [{\"item\":\"es krim\",\"count\":1},{\"item\":\"mie\",\"count\":1}],\n  \"total\": 30000,\n  \"category\": \"Food\",\n  \"date\": \"05 February 2026\"\n}\n\nMapped output:\n{\n  \"expense\": \"Snack\",\n  \"date\": \"2026-02-05\",\n  \"category\": \"Food\",\n  \"amount\": 30000,\n  \"comment\": \"es krim 1x, mie 1x\"\n}\n\n→ create page",
+          "options": {}
+        },
+        "type": "@n8n/n8n-nodes-langchain.agentTool",
+        "typeVersion": 3,
+        "position": [
+          -912,
+          1616
+        ],
+        "id": "271f9256-909f-46b5-ba13-ad5f181f8b5f",
+        "name": "AI Agent Tool"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 3
+            },
+            "conditions": [
+              {
+                "id": "54e2eb95-081b-45f4-ad18-dd261a488957",
+                "leftValue": "={{ $('Webhook').item.json.body.data.message.body }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "notEmpty",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          -224,
+          512
+        ],
+        "id": "c308647a-5bc5-4a42-a63b-b5631a9ae72b",
+        "name": "if text only"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 3
+            },
+            "conditions": [
+              {
+                "id": "c8a3288a-c33e-47a9-9a46-8171d912d772",
+                "leftValue": "={{ $('Webhook').item.json.body.data.message._data.mimetype }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "exists",
+                  "singleValue": true
+                }
+              },
+              {
+                "id": "0cc06367-53fd-4c86-b737-f4eae6f422c0",
+                "leftValue": "={{ $('Webhook').item.json.body.data.message.body }}",
+                "rightValue": "note",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          -448,
+          368
+        ],
+        "id": "38375642-1de6-4233-b771-147e36836f12",
+        "name": "If image"
+      },
+      {
+        "parameters": {
+          "text": "={{ $('Webhook').item.json.body.data.message.body }}",
+          "guardrails": {
+            "custom": {
+              "guardrail": [
+                {
+                  "name": "It should talk about receipt",
+                  "threshold": 0.7,
+                  "prompt": "The input text should talk about receipt. if its not talk about receipt its should not been passed. \n\nexample text that should pass\nice cream 20k\neats 10.000\nbandana 2x 1000\netc.\n\nexample text that should not pass\nhello, how are you\ni wanted you to help me\nhi\netc."
+                }
+              ]
+            }
+          }
+        },
+        "type": "@n8n/n8n-nodes-langchain.guardrails",
+        "typeVersion": 2,
+        "position": [
+          0,
+          384
+        ],
+        "id": "424fb8ab-2efc-4daa-ba9b-26050efe7233",
+        "name": "Guardrails"
+      },
+      {
+        "parameters": {
+          "resource": "databasePage",
+          "databaseId": {
+            "__rl": true,
+            "value": "6cb3902d-c410-4daf-a3b4-39e4be39630d",
+            "mode": "list",
+            "cachedResultName": "Expenses",
+            "cachedResultUrl": "https://www.notion.so/6cb3902dc4104dafa3b439e4be39630d"
+          },
+          "title": "=",
+          "propertiesUi": {
+            "propertyValues": [
+              {
+                "key": "Amount|number",
+                "numberValue": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('propertyValues0_Number', ``, 'number') }}"
+              },
+              {
+                "key": "Category|select",
+                "selectValue": "="
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.notionTool",
+        "typeVersion": 2.2,
+        "position": [
+          -1120,
+          1712
+        ],
+        "id": "ddbf7fdf-72d5-4a7a-bd7b-cfbe7c900d94",
+        "name": "Create a database page in Notion",
+        "credentials": {
+          "notionApi": {
+            "id": "mKGLQR8znfRSqneW",
+            "name": "Notion account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsonSchemaExample": "{\n  \"title\": \"Eats\",\n  \"items\": \"ayam 1x\",\n  \"total\": 20000,\n  \"category\": \"Food\",\n  \"date\": \"20 January 2026\",\n  \"notes\": \"something else if missing\"\n}",
+          "autoFix": true
+        },
+        "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+        "typeVersion": 1.3,
+        "position": [
+          640,
+          176
+        ],
+        "id": "4fd606e5-cd0a-4f03-a1cc-c5f24a9fd10a",
+        "name": "Structured Output Parser"
+      },
+      {
+        "parameters": {
+          "modelName": "models/gemini-2.0-flash-lite-001",
+          "options": {}
+        },
+        "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+        "typeVersion": 1,
+        "position": [
+          -1120,
+          1536
+        ],
+        "id": "7c5206e3-4f4f-40a1-b67a-e47d88a7cc2f",
+        "name": "flash 2.5 lite",
+        "credentials": {
+          "googlePalmApi": {
+            "id": "4sAuTN4q0OVGuY8s",
+            "name": "Google Gemini(PaLM) Api account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "resource": "databasePage",
+          "databaseId": {
+            "__rl": true,
+            "value": "6cb3902d-c410-4daf-a3b4-39e4be39630d",
+            "mode": "list",
+            "cachedResultName": "Expenses",
+            "cachedResultUrl": "https://www.notion.so/6cb3902dc4104dafa3b439e4be39630d"
+          },
+          "propertiesUi": {
+            "propertyValues": [
+              {
+                "key": "Amount|number",
+                "numberValue": "={{ $json.output.total }}"
+              },
+              {
+                "key": "Category|select",
+                "selectValue": "={{ $json.output.category }}"
+              },
+              {
+                "key": "Comment|rich_text",
+                "textContent": "={{ $json.output.items }}"
+              },
+              {
+                "key": "Date|date",
+                "includeTime": false,
+                "date": "={{ $json.output.date }}",
+                "timezone": "Asia/Jakarta"
+              },
+              {
+                "key": "Expense|title",
+                "title": "={{ $json.output.title }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.notion",
+        "typeVersion": 2.2,
+        "position": [
+          1680,
+          96
+        ],
+        "id": "8c16138b-91b3-49dd-81df-a600b00c6e4f",
+        "name": "Create a database page",
+        "credentials": {
+          "notionApi": {
+            "id": "mKGLQR8znfRSqneW",
+            "name": "Notion account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+          "text": "=Done ✅\n{{ $('Create a database page').item.json.url }}",
+          "replyMarkup": "replyKeyboardRemove",
+          "replyKeyboardRemove": {
+            "remove_keyboard": true
+          },
+          "additionalFields": {
+            "appendAttribution": false,
+            "reply_to_message_id": "={{ $('Telegram Trigger').item.json.message.message_id }}"
+          }
+        },
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          -1120,
+          864
+        ],
+        "id": "946439da-22bc-48cb-8606-222caa617cde",
+        "name": "Send a text message",
+        "webhookId": "505379c9-768c-407e-ac42-3beca0691ff3",
+        "notesInFlow": false,
+        "credentials": {
+          "telegramApi": {
+            "id": "u2Xl8VNjQgTweYFq",
+            "name": "Telegram account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 3
+            },
+            "conditions": [
+              {
+                "id": "d82553c6-0831-4ac3-baef-4da5da7dbb6c",
+                "leftValue": "={{ $json.output.title }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "notEmpty",
+                  "singleValue": true
+                }
+              },
+              {
+                "id": "04cf2759-0c30-4995-9602-d1da203de451",
+                "leftValue": "={{ $json.output.items }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "notEmpty",
+                  "singleValue": true
+                }
+              },
+              {
+                "id": "62bf3dee-3eea-42a5-9e02-87e8e7a64df6",
+                "leftValue": "={{ $json.output.total }}",
+                "rightValue": 0,
+                "operator": {
+                  "type": "number",
+                  "operation": "notEquals"
+                }
+              },
+              {
+                "id": "cd32fb8e-bdc0-4f3f-9816-8b86c63c965d",
+                "leftValue": "={{ $json.output.category }}",
+                "rightValue": "^(Food|Entertainment|Home|Online Shop|Other)$",
+                "operator": {
+                  "type": "string",
+                  "operation": "regex"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          1008,
+          160
+        ],
+        "id": "ca204c16-6575-4a3b-a5b2-84f3c4585749",
+        "name": "If all exist"
+      },
+      {
+        "parameters": {
+          "operation": "setInputs"
+        },
+        "type": "n8n-nodes-base.evaluation",
+        "typeVersion": 4.8,
+        "position": [
+          -1120,
+          1088
+        ],
+        "id": "a8a6b851-5e99-4724-a5f4-ac018ca93410",
+        "name": "Evaluation"
+      },
+      {
+        "parameters": {
+          "jsCode": "return {\n  output: {\n    ...$input.first().json.output,\n    date: DateTime.now().toFormat('d LLL yyyy')\n  }\n}"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1456,
+          176
+        ],
+        "id": "0758c91d-cebf-4316-8680-01bc19d5ffc2",
+        "name": "Fall bakc current date"
+      },
+      {
+        "parameters": {
+          "model": "mistralai/mistral-small-3.2-24b-instruct",
+          "options": {}
+        },
+        "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+        "typeVersion": 1,
+        "position": [
+          416,
+          384
+        ],
+        "id": "cb08de43-3dd3-4538-bfd1-3bb0b12631e6",
+        "name": "ministral 3b vision",
+        "credentials": {
+          "openRouterApi": {
+            "id": "7EiThyzOFBzZiqJK",
+            "name": "OpenRouter account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "model": "mistralai/ministral-3b",
+          "options": {}
+        },
+        "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+        "typeVersion": 1,
+        "position": [
+          704,
+          384
+        ],
+        "id": "a39fe3b7-1e1b-4064-acf1-e0b66d4dc824",
+        "name": "ministral 3b",
+        "credentials": {
+          "openRouterApi": {
+            "id": "7EiThyzOFBzZiqJK",
+            "name": "OpenRouter account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "rules": {
+            "rule": [
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "strict",
+                    "version": 2
+                  },
+                  "conditions": [
+                    {
+                      "id": "a85770dc-2198-4437-8901-d8338a2233f4",
+                      "leftValue": "={{ $('Webhook').item.json.body.data.message._data.mimetype }}",
+                      "rightValue": "",
+                      "operator": {
+                        "type": "string",
+                        "operation": "exists",
+                        "singleValue": true
+                      }
+                    }
+                  ],
+                  "combinator": "and"
+                }
+              },
+              {
+                "modelIndex": 2,
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "strict",
+                    "version": 2
+                  },
+                  "conditions": [
+                    {
+                      "id": "7a7200b8-d514-46c9-a461-14116605e428",
+                      "leftValue": "={{ $('Webhook').item.json.body.data.message.body }}",
+                      "rightValue": "",
+                      "operator": {
+                        "type": "string",
+                        "operation": "exists",
+                        "singleValue": true
+                      }
+                    }
+                  ],
+                  "combinator": "and"
+                }
+              }
+            ]
+          }
+        },
+        "type": "@n8n/n8n-nodes-langchain.modelSelector",
+        "typeVersion": 1,
+        "position": [
+          352,
+          176
+        ],
+        "id": "e99a6c00-9feb-4f1b-9a44-345c68711e81",
+        "name": "Model Selector"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 3
+            },
+            "conditions": [
+              {
+                "id": "e0377239-a3cd-40b4-80a4-f194b765d84b",
+                "leftValue": "={{ $('Webhook').item.json.body.data.message._data.mimetype }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "exists",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          1904,
+          96
+        ],
+        "id": "12696938-bd03-40b9-b719-6c0faf337ffb",
+        "name": "If image exist"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.notion.com/v1/file_uploads",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "httpBearerAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Notion-Version",
+                "value": "2025-09-03"
+              }
+            ]
+          },
+          "sendBody": true,
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "filename",
+                "value": "={{ $('Get Media').item.binary.data.fileName }}"
+              },
+              {
+                "name": "content_type",
+                "value": "={{ $('Get Media').item.binary.data.mimeType }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          2128,
+          32
+        ],
+        "id": "67ec97a9-3587-4854-a180-469c3501d224",
+        "name": "create file upload in notion",
+        "credentials": {
+          "httpBearerAuth": {
+            "id": "5vFYdLaF0aeJJnsf",
+            "name": "Notion"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "=https://api.notion.com/v1/file_uploads/{{ $json.id }}/send",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "httpBearerAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Notion-Version",
+                "value": "=2025-09-03"
+              }
+            ]
+          },
+          "sendBody": true,
+          "contentType": "multipart-form-data",
+          "bodyParameters": {
+            "parameters": [
+              {
+                "parameterType": "formBinaryData",
+                "name": "file",
+                "inputDataFieldName": "={{ $('Get Media').item.binary.data }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          2352,
+          32
+        ],
+        "id": "15058907-0601-4a79-809d-3e58da936d78",
+        "name": "upload file into notion",
+        "credentials": {
+          "httpBearerAuth": {
+            "id": "5vFYdLaF0aeJJnsf",
+            "name": "Notion"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "method": "PATCH",
+          "url": "=https://api.notion.com/v1/blocks/{{ $('Create a database page').item.json.id }}/children",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "httpBearerAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Notion-Version",
+                "value": "=2025-09-03"
+              }
+            ]
+          },
+          "sendBody": true,
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "children",
+                "value": "={{\n[\n  {\n    type: \"image\",\n    image: {\n      type: \"file_upload\",\n      file_upload: {\n        id: $json.id\n      }\n    }\n  }\n]\n}}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          2576,
+          32
+        ],
+        "id": "7045bfa0-3240-4dc5-873b-d2fe7ddfe606",
+        "name": "append to block",
+        "credentials": {
+          "httpBearerAuth": {
+            "id": "5vFYdLaF0aeJJnsf",
+            "name": "Notion"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "errorMessage": "=womp womp\n\n{{ $json }}"
+        },
+        "type": "n8n-nodes-base.stopAndError",
+        "typeVersion": 1,
+        "position": [
+          1232,
+          288
+        ],
+        "id": "f781cd42-ff2c-4f4e-97c5-a2aba9eae1f2",
+        "name": "Stop and Error"
+      },
+      {
+        "parameters": {
+          "errorMessage": "=womp womp\n\n{{ $json }}"
+        },
+        "type": "n8n-nodes-base.stopAndError",
+        "typeVersion": 1,
+        "position": [
+          576,
+          640
+        ],
+        "id": "b2f0fd38-9195-4291-b875-867fb2ed3e1a",
+        "name": "Stop and Error1"
+      },
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "web-whatsapp",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2.1,
+        "position": [
+          -1120,
+          432
+        ],
+        "id": "bed61fa0-c4f7-4842-a5c9-c189497e342b",
+        "name": "Webhook",
+        "webhookId": "dc4a5e14-6918-437c-9342-5a9746361038"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 3
+            },
+            "conditions": [
+              {
+                "id": "b772fe1e-5831-4317-a304-8011ed306621",
+                "leftValue": "={{ $json.body.data.message._data.id.fromMe }}",
+                "rightValue": "message_create",
+                "operator": {
+                  "type": "boolean",
+                  "operation": "false",
+                  "singleValue": true
+                }
+              },
+              {
+                "id": "d6225ccb-180c-46fa-82a2-50a7411bb9b2",
+                "leftValue": "={{ $json.body.data.message._data.notifyName }}",
+                "rightValue": "Ahmadun Na'il",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals",
+                  "name": "filter.operator.equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          -896,
+          432
+        ],
+        "id": "faa0498e-c1b4-43de-b218-217e640806c7",
+        "name": "Filter webhook"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "=http://wwebjs-api:3000/message/downloadMediaAsData/{{ $('Webhook').item.json.body.sessionId }}",
+          "sendBody": true,
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "messageId",
+                "value": "={{ $('Webhook').item.json.body.data.message.id.id }}"
+              },
+              {
+                "name": "chatId",
+                "value": "={{ $('Webhook').item.json.body.data.message.id.remote }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          64,
+          96
+        ],
+        "id": "0ab48e68-4343-4cb6-a55b-56c3a0294629",
+        "name": "Get Media"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "=http://wwebjs-api:3000/chat/sendStateTyping/{{ $json.body.sessionId }}",
+          "sendBody": true,
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "chatId",
+                "value": "={{ $json.body.data.message.id.remote }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          -672,
+          368
+        ],
+        "id": "bdd10e0f-5297-4abe-ae51-2e7e68af3ed0",
+        "name": "Send Typing"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "=http://wwebjs-api:3000/chat/clearState/{{ $('Webhook').item.json.body.sessionId }}",
+          "sendBody": true,
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "chatId",
+                "value": "={{ $('Webhook').item.json.body.data.message.id.remote }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          2800,
+          96
+        ],
+        "id": "b725dea0-8c1d-474e-b13a-6a1ee15dbc2b",
+        "name": "Clear Typing"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "=http://wwebjs-api:3000/message/reply/{{ $('Webhook').item.json.body.sessionId }}",
+          "sendBody": true,
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "messageId",
+                "value": "={{ $('Webhook').item.json.body.data.message.id.id }}"
+              },
+              {
+                "name": "chatId",
+                "value": "={{ $('Webhook').item.json.body.data.message.id.remote }}"
+              },
+              {
+                "name": "content",
+                "value": "=Done ✅ \n{{ $('Create a database page').item.json.url }}"
+              },
+              {
+                "name": "contentType",
+                "value": "string"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          3024,
+          96
+        ],
+        "id": "a1aff05e-9a95-44a0-a528-54d7d1ad93a6",
+        "name": "Reply"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 3
+            },
+            "conditions": [
+              {
+                "id": "c60eb60d-33f9-4f7c-8c78-3e68b25e4d24",
+                "leftValue": "={{(()=>{ const dateString = $json.output.date; const target = DateTime.fromFormat(dateString, 'd LLL yyyy'); const now = DateTime.now();  let diffInMonths = Math.abs(target.diff(now, 'months').months);  return Math.round(diffInMonths) || 0; })()}}",
+                "rightValue": "={{ 12 }}",
+                "operator": {
+                  "type": "number",
+                  "operation": "lt"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          1232,
+          96
+        ],
+        "id": "0cba200b-b8ce-4165-a613-453ca19fae43",
+        "name": "If check date"
+      },
+      {
+        "parameters": {
+          "model": "openrouter/free",
+          "options": {}
+        },
+        "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+        "typeVersion": 1,
+        "position": [
+          80,
+          608
+        ],
+        "id": "271f66f9-9d56-4c04-b41a-0698fbc8faed",
+        "name": "open router free",
+        "credentials": {
+          "openRouterApi": {
+            "id": "7EiThyzOFBzZiqJK",
+            "name": "OpenRouter account"
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Telegram Trigger": {
+        "main": [
+          []
+        ]
+      },
+      "AI Agent Tool": {
+        "ai_tool": [
+          []
+        ]
+      },
+      "if text only": {
+        "main": [
+          [
+            {
+              "node": "Guardrails",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Stop and Error1",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "If image": {
+        "main": [
+          [
+            {
+              "node": "Get Media",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "if text only",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Guardrails": {
+        "main": [
+          [
+            {
+              "node": "AI Agent",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Stop and Error1",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Create a database page in Notion": {
+        "ai_tool": [
+          [
+            {
+              "node": "AI Agent Tool",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Structured Output Parser": {
+        "ai_outputParser": [
+          [
+            {
+              "node": "AI Agent",
+              "type": "ai_outputParser",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "flash 2.5 lite": {
+        "ai_languageModel": [
+          [
+            {
+              "node": "AI Agent Tool",
+              "type": "ai_languageModel",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "AI Agent": {
+        "main": [
+          [
+            {
+              "node": "If all exist",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Create a database page": {
+        "main": [
+          [
+            {
+              "node": "If image exist",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Send a text message": {
+        "main": [
+          []
+        ]
+      },
+      "If all exist": {
+        "main": [
+          [
+            {
+              "node": "If check date",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Stop and Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fall bakc current date": {
+        "main": [
+          [
+            {
+              "node": "Create a database page",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "ministral 3b vision": {
+        "ai_languageModel": [
+          [
+            {
+              "node": "Model Selector",
+              "type": "ai_languageModel",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "ministral 3b": {
+        "ai_languageModel": [
+          [
+            {
+              "node": "Structured Output Parser",
+              "type": "ai_languageModel",
+              "index": 0
+            },
+            {
+              "node": "Model Selector",
+              "type": "ai_languageModel",
+              "index": 1
+            }
+          ]
+        ]
+      },
+      "Model Selector": {
+        "ai_languageModel": [
+          [
+            {
+              "node": "AI Agent",
+              "type": "ai_languageModel",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "If image exist": {
+        "main": [
+          [
+            {
+              "node": "create file upload in notion",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Clear Typing",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create file upload in notion": {
+        "main": [
+          [
+            {
+              "node": "upload file into notion",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "upload file into notion": {
+        "main": [
+          [
+            {
+              "node": "append to block",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "append to block": {
+        "main": [
+          [
+            {
+              "node": "Clear Typing",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Webhook": {
+        "main": [
+          [
+            {
+              "node": "Filter webhook",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Filter webhook": {
+        "main": [
+          [
+            {
+              "node": "Send Typing",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          []
+        ]
+      },
+      "Get Media": {
+        "main": [
+          [
+            {
+              "node": "AI Agent",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Send Typing": {
+        "main": [
+          [
+            {
+              "node": "If image",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Reply": {
+        "main": [
+          []
+        ]
+      },
+      "Clear Typing": {
+        "main": [
+          [
+            {
+              "node": "Reply",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "If check date": {
+        "main": [
+          [
+            {
+              "node": "Create a database page",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Fall bakc current date",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "open router free": {
+        "ai_languageModel": [
+          [
+            {
+              "node": "Guardrails",
+              "type": "ai_languageModel",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "llean s",
+    "name": "Version 1.8",
+    "description": "- Ignore filtered error",
+    "autosaved": true,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-02-06T11:28:11.851Z",
+        "id": 32,
+        "workflowId": "J-KPxzA-oEEEjuo6tTbPV",
+        "versionId": "7cee4cb4-301a-4bf0-9211-5a2528c0acf0",
+        "event": "activated",
+        "userId": "66de3ae6-081c-419d-899a-09cc5d67d161"
+      }
+    ]
+  },
+  "scopes": [
+    "workflow:create",
+    "workflow:delete",
+    "workflow:execute",
+    "workflow:execute-chat",
+    "workflow:list",
+    "workflow:move",
+    "workflow:publish",
+    "workflow:read",
+    "workflow:share",
+    "workflow:update"
+  ],
+  "checksum": "f7e9da75eb52f695329d20b4501b7e3ba512459b2308c0cf53caf72ab6517818"
+}
